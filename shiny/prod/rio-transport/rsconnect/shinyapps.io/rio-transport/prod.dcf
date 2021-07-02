@@ -1,0 +1,13 @@
+name: prod
+title:
+username:
+account: rio-transport
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 4346476
+bundleId: 4781648
+url: https://riotransport.shinyapps.io/prod/
+when: 1625249238.39102
+lastSyncTime: 1625249238.39103
+asMultiple: FALSE
+asStatic: FALSE
