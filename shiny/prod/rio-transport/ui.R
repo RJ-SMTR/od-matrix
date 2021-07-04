@@ -21,6 +21,17 @@ BRTOperatorList <- distinct(BRTOperators, Operator)
 
 shinyUI(
     navbarPage("Rio Transport: Prod",
+               # Homepage -----------------------------------------
+               tabPanel("Homepage",
+                                imageOutput("HomepageMockup")
+               ),
+               # Mockup: Problem Identification -----------------------------------------
+               tabPanel("Mockup: Problem Identification",
+                        imageOutput("ProblemIdentification1", height = "650px"),
+                        imageOutput("ProblemIdentification2", height = "650px"),
+                        imageOutput("ProblemIdentification3", height = "650px"),
+                        imageOutput("ProblemIdentification4", height = "650px")
+               ),
                # Summary: Heatmaps -----------------------------------------
                tabPanel("Summary: Heatmaps",
                         sidebarLayout(
@@ -55,11 +66,12 @@ shinyUI(
                                                                   "Saturday" = 6,
                                                                   "Sunday" = 7),
                                                    selected = c(1, 2, 3, 4, 5, 6, 7)),
-                                sliderInput("CapacityHourSliderTable", label = h3("Time of Day"), min = 0, 
+                                sliderInput("TableHourSlider", label = h3("Time of Day"), min = 0, 
                                             max = 24, value = c(0, 24)),
-                                width = 2
+                                width = 3
                             ),
                             mainPanel(
+                                titlePanel("Try clicking on different rows"),
                                 DT::dataTableOutput("UtilisationTable"),
                                 leafletOutput("SelectedLineMap")
                             )
@@ -113,6 +125,11 @@ shinyUI(
                                 plotlyOutput("SpacialView", width = "100%", height = 600)
                             )
                         )
+               ),
+               # Kepler iframe -----------------------------------------
+               tabPanel("Kepler.gl",
+                        titlePanel("An iFrame Example"),
+                        htmlOutput("Kepler")
                )
     )
 )

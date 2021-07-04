@@ -83,15 +83,14 @@ shinyServer(function(input, output) {
     output$UtilisationTable <- DT::renderDataTable({
         
         IntervalDataFiltered <- IntervalData %>%
-            filter(wday(AsAt) %in% input$DayOfWeekTable) %>%
-            mutate(
-                TotalCapacity = as.numeric(TotalCapacity),
-                SittingCapacity = as.numeric(SittingCapacity)
-            ) %>%
+            mutate(EnterH3Hour = hour(as.POSIXct(EnterH3Time, format="%H:%M:%S"
+                                            , origin = '1990-01-01'))) %>%
+            filter(wday(AsAt) %in% input$DayOfWeekTable,
+                   EnterH3Hour >= input$TableHourSlider[1],
+                   EnterH3Hour <= input$TableHourSlider[2]
+                   ) %>%
             group_by(Line) %>%
             summarise(   
-                TotalSittingCapacity = sum(SittingCapacity, na.rm = TRUE),
-                TotalStandingCapacity = sum(StandingCapacity, na.rm = TRUE),
                 TotalCapacity = sum(TotalCapacity, na.rm = TRUE)) %>%
             mutate(
                 UtilisationRate = log(TotalCapacity) / 10 - 0.7,
@@ -105,11 +104,11 @@ shinyServer(function(input, output) {
             ) %>%
             left_join(BRTOperators) %>%
             select(Line, Operator, 
-                   SittingCapacity = TotalSittingCapacity, 
-                   StandingCapacity = TotalStandingCapacity, 
                    TotalCapacity, UtilisationRate, Status = UtilisationStatus) %>%
+            add_column(Buses = round(runif(nrow(.)) * 10, digits = 0)) %>%
+            relocate(Buses, .before = TotalCapacity) %>%
             as_tibble() %>%
-            datatable() %>%
+            datatable(selection = list(mode = 'single', selected = c(1))) %>%
             formatStyle('Status', 
                         backgroundColor = styleEqual(c("Unacceptably High", "Unacceptably Low", "Acceptable"), c('orange', 'yellow', 'light blue'))
             ) %>%
@@ -132,7 +131,8 @@ shinyServer(function(input, output) {
             summarise(   
                 TotalSittingCapacity = sum(SittingCapacity, na.rm = TRUE),
                 TotalStandingCapacity = sum(StandingCapacity, na.rm = TRUE),
-                TotalCapacity = sum(TotalCapacity, na.rm = TRUE))
+                TotalCapacity = sum(TotalCapacity, na.rm = TRUE)
+                ) 
         
         s <- input$UtilisationTable_rows_selected
         line <- IntervalDataFiltered[s, ]
@@ -280,5 +280,36 @@ shinyServer(function(input, output) {
             scale_y_continuous(labels = NULL)
         
         ggplotly(p, tooltip="text")
+    })
+    
+    # Homepage Mockup ---------------------------------------
+    output$HomepageMockup <- renderImage({
+        list(src = './images/homepage.png', width = "60%")
+    }, deleteFile = FALSE)
+    
+    # Problem Identification Mockups ---------------------------------------
+    output$ProblemIdentification1 <- renderImage({
+        list(src = './images/ProblemIdentification1.png', width = "60%")
+    }, deleteFile = FALSE)
+    
+    output$ProblemIdentification2 <- renderImage({
+        list(src = './images/ProblemIdentification2.png', width = "60%")
+    }, deleteFile = FALSE)
+    
+    output$ProblemIdentification3 <- renderImage({
+        list(src = './images/ProblemIdentification3.png', width = "60%")
+    }, deleteFile = FALSE)
+    
+    output$ProblemIdentification4 <- renderImage({
+        list(src = './images/ProblemIdentification4.png', width = "60%")
+    }, deleteFile = FALSE)
+    
+    # Kepler iframe ----------------------------------------
+    output$Kepler <- renderUI({
+        my_test <- tags$iframe(
+            src="https://kepler.gl/demo/map?mapUrl=https://dl.dropboxusercontent.com/s/rghgluq22ie337t/keplergl_d002q4j.json",
+                               height=800, width="100%")
+        print(my_test)
+        my_test
     })
 })
