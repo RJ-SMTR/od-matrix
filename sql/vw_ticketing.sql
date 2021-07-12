@@ -2,6 +2,8 @@ WITH raw_ticketing AS (
 
 	SELECT
 		DATA_HORA_TRANSACAO		AS origin_as_at,
+		CAST(LEFT(DATA_HORA_TRANSACAO,10) AS date) AS as_at,
+		CAST(CONCAT(SUBSTRING(DATA_HORA_TRANSACAO, 12, 2), ':', SUBSTRING(DATA_HORA_TRANSACAO,15,2), ':00') AS time) AS origin_time, -- Seconds do not appear
 		NUMERO_CARTAO			AS card_id, 
 		ROW_NUMBER() OVER (PARTITION BY NUMERO_CARTAO ORDER BY DATA_HORA_TRANSACAO) AS daily_trip_id, --Will need to partition by date in future
 		MODAL					AS origin_mode, 
@@ -48,10 +50,12 @@ intermediate_ticketing AS (
 	
 ticketing AS (
 
-	SELECT 
+	SELECT
+		as_at,
 		card_id,
-		origin_as_at,
+		daily_trip_id,
 		daily_trip_stage,
+		origin_time,
 		origin_mode,
 		origin_code,
 		destination_mode,

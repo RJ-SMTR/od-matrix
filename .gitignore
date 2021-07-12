@@ -4,6 +4,7 @@
 
 # Session Data files
 *.RData
+*.csv
 
 # User-specific files
 .Ruserdata
@@ -40,3 +41,4 @@ vignettes/*.pdf
 
 # photoshop files
 *.psd
+

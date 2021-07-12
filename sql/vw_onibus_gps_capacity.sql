@@ -36,18 +36,18 @@ GPSH3Table AS (
 
 OnibusCapacity AS (
     SELECT 
-        GPSH3Table.data                         AS AsAt,
-        GPSH3Table.ordem                        AS OnibusID,
-        linha                                   AS Line,
-        tile_id                                 AS TileID,
-        hora_completa                           AS EnterH3Time,
+        GPSH3Table.data                         AS as_at,
+        GPSH3Table.ordem                        AS onibus_id,
+        linha                                   AS line,
+        tile_id                                 AS tile_id,
+        hora_completa                           AS h3_time_enter,
         LEAD(hora_completa) OVER 
             (PARTITION BY GPSH3Table.ordem, GPSH3Table.data 
             ORDER BY GPSH3Table.ordem, GPSH3Table.data, hora_completa) 
-                                                AS ExitH3Time,
-        capacidade_sentados                     AS SittingCapacity,
-        capacidade_em_pe                        AS StandingCapacity,
-        capacidade_sentados + capacidade_em_pe  AS TotalCapacity
+                                                AS h3_time_exit,
+        capacidade_sentados                     AS capacity_sitting,
+        capacidade_em_pe                        AS capacity_standing,
+        capacidade_sentados + capacidade_em_pe  AS capacity_total
     
     FROM GPSH3Table 
         LEFT JOIN `br_rj_riodejaneiro_transporte.veiculos_licenciados` AS VehicleTable
@@ -61,9 +61,8 @@ OnibusCapacity AS (
 
 SELECT *
 FROM OnibusCapacity 
-WHERE AsAt >= '2021-06-11'
-AND AsAt <= '2021-06-12'
-ORDER BY AsAt, OnibusID, EnterH3Time
+WHERE as_at = '2021-06-10'
+ORDER BY as_at, onibus_id, h3_time_enter
 
 
 
