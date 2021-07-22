@@ -5,9 +5,9 @@ account: rio-transport
 server: shinyapps.io
 hostUrl: https://api.shinyapps.io/v1
 appId: 4346476
-bundleId: 4784836
+bundleId: 4844170
 url: https://riotransport.shinyapps.io/prod/
-when: 1625366717.12925
-lastSyncTime: 1625366717.12927
+when: 1626928011.62098
+lastSyncTime: 1626928011.62099
 asMultiple: FALSE
 asStatic: FALSE

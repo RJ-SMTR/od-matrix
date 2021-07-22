@@ -6,11 +6,179 @@ library(shiny)
 
 IntervalData <- read.csv("IntervalData.csv")
 BRTOperators <- read.csv("BRTOperatorList.csv")
+onibus_utilisation <- read_csv("onibus_utilisation.csv", col_types = cols(line = col_character())) 
+origin_destination <- read_csv("origin_destination_map.csv")
 
 BRTLineList <- distinct(IntervalData, Line)
 BRTOperatorList <- distinct(BRTOperators, Operator)
 
 shinyServer(function(input, output) {
+    # OD Matrix ------------------------------------------------------------------
+    output$ODMap <- renderLeaflet({
+        ODBaseLayer <- distinct(origin_destination, origin_tile_id)
+        
+        ODBaseLayerHex <- h3_to_geo_boundary_sf(ODBaseLayer$origin_tile_id) %>%
+            dplyr::mutate(
+                index = ODBaseLayer$origin_tile_id
+            )
+        
+        OriginDestinationFiltered <- origin_destination %>%
+            filter(
+                origin_hour >= input$ODHourSlider[1],
+                origin_hour <= input$ODHourSlider[2]
+            ) %>%
+            filter(origin_tile_id == input$OriginTile) %>%
+            group_by(origin_tile_id, destination_tile_id) %>%
+            summarise(
+                n = sum(n, na.rm = TRUE)
+            ) 
+        
+        hexagons2 <- h3_to_geo_boundary_sf(OriginDestinationFiltered$destination_tile_id) %>%
+            dplyr::mutate(
+                index = OriginDestinationFiltered$destination_tile_id, 
+                n = OriginDestinationFiltered$n
+            )
+        
+        pal2 <- colorBin(colorRamps::matlab.like2(10000), domain = hexagons2$n
+                         #,reverse = TRUE
+                         )
+        
+        leaflet(data = hexagons2, width = "100%") %>%
+            addProviderTiles("Stamen.Toner")  %>%
+            addPolygons(
+                weight = 2,
+                color = "white",
+                fillColor = ~ pal2(n),
+                fillOpacity = 1,
+                label = ~ sprintf("%*.f Destinations", 4, n)
+            ) %>%
+            addPolygons(
+                weight = 2,
+                color = "white",
+                layerId = ~index,
+                data = ODBaseLayerHex
+            )
+        
+    })
+    
+    observe({
+        ## the sgmap2 needs to match the name of the map you're outputting above
+        event <- input$ODMap_shape_click
+        print( event )
+        updateSelectInput(session = getDefaultReactiveDomain(), inputId = "OriginTile", selected = event$id)
+        
+    }) 
+    
+    # Onibus Utilisation Map -----------------------------------------------------
+    OnibusUtilisationReactive <- reactive({
+        if(!is.null(input$OnibusLine)){ # If line selected, filter line and update bus ID filter
+            onibus_utilisation %>% filter(line %in% input$OnibusLine)
+    }
+        else {onibus_utilisation}
+    })  
+    
+   observe({
+        if(!is.null(input$OnibusLine)){
+            updateSelectInput(
+                session = getDefaultReactiveDomain(),
+                inputId = "OnibusID",
+                choices = distinct(OnibusUtilisationReactive(), onibus_id)
+            )}
+    })
+    
+   OnibusUtilisationReactiveOnibusID <- reactive({
+        if(!is.null(input$OnibusID)){
+            OnibusUtilisationReactive() %>% filter(onibus_id %in% input$OnibusID)
+        } 
+        else{OnibusUtilisationReactive()}
+    })
+    
+    output$OnibusUtilisationMap <- renderLeaflet({
+        utilisation_map <- OnibusUtilisationReactiveOnibusID() %>%
+            mutate(h3_time_enter = hour(as.POSIXct(h3_time_enter, format="%H:%M:%S"
+                                                 , origin = '1990-01-01'))) %>%
+            filter(
+                h3_time_enter >= input$OnibusUtilisationHourSlider[1],
+                h3_time_enter <= input$OnibusUtilisationHourSlider[2],
+                utilisation_sitting <= 2
+                ) %>%
+            group_by(tile_id) %>%
+            summarise(
+                demand = mean(n_passengers, na.rm = TRUE),
+                sitting_supply = mean(capacity_sitting, na.rm = TRUE),
+                utilisation_sitting = mean(utilisation_sitting, na.rm = TRUE)
+            ) 
+        
+        hexagons <- h3_to_geo_boundary_sf(utilisation_map$tile_id) %>%
+            dplyr::mutate(
+                index = utilisation_map$tile_id, 
+                utilisation = utilisation_map$utilisation_sitting,
+                demand = utilisation_map$demand,
+                sitting_supply = utilisation_map$sitting_supply
+            )
+        
+        pal <- colorBin("RdYlGn", domain = c(0, 1), reverse = TRUE)
+        
+        leaflet(data = hexagons, width = "100%") %>%
+            addProviderTiles("Stamen.Toner") %>%
+            addPolygons(
+                weight = 2,
+                color = "white",
+                fillColor = ~ pal(utilisation),
+                fillOpacity = 0.8,
+                label = ~ sprintf("%*.f Perc. Average Utilisation", 4, utilisation * 100),
+                layerId = ~index
+            ) 
+    })
+    
+    OnibusUtilisationFiltered <- reactive({
+        if(!is.null(input$OnibusLine)){ # If line selected, filter line and update bus ID filter
+            onibus_utilisation %>% filter(line %in% input$OnibusLine)
+        }
+        else {onibus_utilisation}
+    })  
+    
+    output$OnibusTable <- DT::renderDataTable({
+        OnibusUtilisationFiltered <- OnibusUtilisationFiltered() %>%
+            mutate(EnterH3Hour = hour(as.POSIXct(h3_time_enter, format="%H:%M:%S"
+                                                 , origin = '1990-01-01')),
+                   Interval = ceiling_date(as.POSIXct(h3_time_enter, format="%H:%M:%S"
+                                                      , origin = '1990-01-01'), "1 hour")
+                   ) %>%
+            filter(
+                   EnterH3Hour >= input$OnibusUtilisationHourSlider[1],
+                   EnterH3Hour <= input$OnibusUtilisationHourSlider[2]
+            ) %>%
+            group_by(line, Interval) %>%
+            summarise(   
+                    Busses = n_distinct(onibus_id),
+                    AveragePassengers = mean(n_passengers, na.rm = TRUE) %>% round(digits = 0),
+                    AverageSitting = mean(capacity_sitting, na.rm = TRUE) %>% round(digits = 0),
+                    AverageUtilisation = mean(utilisation_sitting, na.rm = TRUE) %>% round(digits = 2)
+                ) %>%
+            mutate(
+                Interval = hour(Interval),
+                UtilisationStatus = case_when(
+                    AverageUtilisation >= 0.8 ~ "Unacceptably High",
+                    between(AverageUtilisation, 0.4, 0.8) ~ "Acceptable",
+                    AverageUtilisation < 0.4 ~ "Unacceptably Low",
+                    TRUE ~ "Error"
+                )
+            ) %>%
+            as_tibble() %>%
+            datatable(
+                options = list(pageLength = 20)
+                ) %>%
+            formatStyle('UtilisationStatus', 
+                        backgroundColor = styleEqual(c("Unacceptably High", "Unacceptably Low", "Acceptable"), c('orange', 'yellow', 'light blue'))
+            ) %>%
+            formatStyle('AverageUtilisation',
+                        background = styleColorBar(range(0, 2), 'lightblue'),
+                        backgroundSize = '98% 88%',
+                        backgroundRepeat = 'no-repeat',
+                        backgroundPosition = 'center')
+        
+    }, server = FALSE)
     
     # Capacity Heatmap -----------------------------------------------------
     output$CapacityHeatmap <- renderPlotly({

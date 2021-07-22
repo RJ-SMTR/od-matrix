@@ -12,18 +12,61 @@ library(hrbrthemes)
 library(ggplot2)
 library(viridis)
 library(DT)
+library(h3)
+library(sf)
 
 IntervalData <- read.csv("IntervalData.csv")
 BRTOperators <- read.csv("BRTOperatorList.csv")
+onibus_utilisation <- read_csv("onibus_utilisation.csv", col_types = cols(line = col_character())) 
+origin_destination <- read_csv("origin_destination_map.csv")
 
 BRTLineList <- distinct(IntervalData, Line)
 BRTOperatorList <- distinct(BRTOperators, Operator)
+OnibusLineList <- distinct(onibus_utilisation, line)
+OnibusIDList <- distinct(onibus_utilisation, onibus_id)
+ODOriginTile <- distinct(origin_destination, origin_tile_id)
 
 shinyUI(
     navbarPage("Rio Transport: Prod",
                # Homepage -----------------------------------------
                tabPanel("Homepage",
                                 imageOutput("HomepageMockup")
+               ),
+               # OD Matrix ------------------------------------------------------
+               tabPanel("OD Matrix",
+                        sidebarLayout(
+                          sidebarPanel(
+                            sliderInput("ODHourSlider", label = h3("Time of Day"), min = 0, 
+                                        max = 24, value = c(0, 24)),
+                            selectInput("OriginTile", label = h3("Origin Tile"), 
+                                        choices = ODOriginTile$origin_tile_id,
+                                        multiple = FALSE)
+                          ),
+                          mainPanel(
+                            leafletOutput("ODMap", height = "650px")
+                          )
+                        )
+               ),
+               # Onibus Utilisation Map -----------------------------------------
+               tabPanel("Onibus Utilisation",
+                        sidebarLayout(
+                          sidebarPanel(
+                            selectInput("OnibusLine", label = h3("Line"), 
+                                        choices = OnibusLineList$line,
+                                        multiple = TRUE),
+                            conditionalPanel(
+                              condition = "input.OnibusLine != ''",
+                              selectInput("OnibusID", label = h3("Bus ID"), 
+                                          choices = OnibusIDList$onibus_id,
+                                          multiple = TRUE)),
+                            sliderInput("OnibusUtilisationHourSlider", label = h3("Time of Day"), min = 0, 
+                                        max = 24, value = c(0, 24))
+                          ),
+                          mainPanel(
+                            leafletOutput("OnibusUtilisationMap", height = "650px"),
+                            DT::dataTableOutput("OnibusTable")
+                          )
+                        )
                ),
                # Mockup: Problem Identification -----------------------------------------
                tabPanel("Mockup: Problem Identification",
