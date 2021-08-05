@@ -42,10 +42,10 @@ onibus_gps AS (
 
 ),
 
-working_table AS (								-- Working table, join gps data with ticketing data, match tap with GPS ping
+onibus_boarding AS (								-- Working table, join gps data with ticketing data, match tap with GPS ping
 SELECT 
 	onibus_gps.as_at,
-	onibus_id,
+	onibus_gps.onibus_id,
 	onibus_gps.line,
 	onibus_gps.tile_id,
 	onibus_gps.h3_time_enter,
@@ -63,7 +63,7 @@ SELECT
 FROM onibus_gps
 
 LEFT JOIN ticketing_onibus
-		ON origin_code = CAST(RIGHT(onibus_id,5) AS INT)
+		ON origin_code = CAST(RIGHT(onibus_gps.onibus_id,5) AS INT)
 			AND ticketing_onibus.as_at = onibus_gps.as_at
 			AND origin_time BETWEEN onibus_gps.h3_time_enter AND onibus_gps.h3_time_exit
 
@@ -104,7 +104,7 @@ SELECT
 	
 FROM onibus_gps B
 
-INNER JOIN working_table A
+INNER JOIN onibus_boarding A
 	ON A.as_at = B.as_at AND A.onibus_id = B.onibus_id
 	AND B.h3_time_exit > origin_time
 	AND B.h3_time_enter < TIME_ADD(origin_time, INTERVAL 2 HOUR)
@@ -123,16 +123,39 @@ min_distance AS (							-- min distance row for each tap, to identify where alon
 	ORDER BY card_id
 )
 
-SELECT 	a.as_at, a.onibus_id, a.line, tile_id, h3_time_enter, h3_time_exit, 
+SELECT 	distance_table.as_at, 
+		distance_table.onibus_id, 
+		distance_table.line, 
+		tile_id, 
+		h3_time_enter, 
+		h3_time_exit, 
+		EXTRACT(HOUR FROM h3_time_enter)			AS h3_hour_enter,
 		COUNT(*) 									AS n_passengers, 
 		AVG(capacity_sitting)						AS capacity_sitting,
 		AVG(capacity_standing)						AS capacity_standing,
 		AVG(capacity_total) 						AS average_capacity_total,
-		COUNT(*) / AVG(capacity_sitting)			AS utilisation_sitting
-FROM distance_table a
-LEFT JOIN min_distance b
-	ON a.as_at = b.as_at AND a.onibus_id = b.onibus_id AND a.card_id = b.card_id AND a.origin_time = b.origin_time
+		COUNT(*) / AVG(capacity_total)				AS utilisation_total,
+		AVG(perc_group_total)						AS unaccounted_proportion,
+		COUNT(*) / (1 - AVG(perc_group_total))								AS n_passengers_adjusted,
+		( COUNT(*) / (1 - AVG(perc_group_total)) ) / AVG(capacity_total) 	AS utilisation_total_adjusted
 
-WHERE n <= max_row
-GROUP BY a.as_at, a.onibus_id, a.line, tile_id, h3_time_enter, h3_time_exit
+FROM distance_table
+
+LEFT JOIN min_distance 
+	ON distance_table.as_at 		= min_distance.as_at 
+	AND distance_table.onibus_id 	= min_distance.onibus_id 
+	AND distance_table.card_id 		= min_distance.card_id 
+	AND distance_table.origin_time 	= min_distance.origin_time
+
+LEFT JOIN pytest.vw_onibus_unaccounted_trips
+	ON vw_onibus_unaccounted_trips.as_at = distance_table.as_at
+	AND vw_onibus_unaccounted_trips.onibus_id = distance_table.onibus_id
+	AND vw_onibus_unaccounted_trips.onibus_line = distance_table.line
+	AND vw_onibus_unaccounted_trips.origin_hour = EXTRACT(HOUR FROM h3_time_enter)
+
+WHERE distance_table.n <= max_row
+	AND vw_onibus_unaccounted_trips.accounted_unaccounted = 'Unexplained'
+
+GROUP BY distance_table.as_at, distance_table.onibus_id, distance_table.line, tile_id, h3_time_enter, h3_time_exit
+
 ORDER BY onibus_id, h3_time_enter

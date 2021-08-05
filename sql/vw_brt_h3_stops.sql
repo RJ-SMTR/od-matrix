@@ -18,6 +18,10 @@ H3Table AS (
     FROM `rj-smtr.br_rj_riodejaneiro_geo.h3_res8` 
     )
 
+ SELECT *
+FROM BRTStops
+WHERE stop_name LIKE '%Fundão%'
+    
 SELECT 
 	COD_VEICULO AS ticketing_station_id,
 	NOME 		AS ticketing_station_name,
@@ -39,3 +43,5 @@ RIGHT JOIN pytest.brt_ticketing_gtfs_lookup
 	ON CAST(brt_ticketing_gtfs_lookup.gtfs_stop_id AS string) = BRTStops.stop_id --Fundão is missing, fix later, caused by h3 inner join i think
 
 ORDER BY gtfs_stop_name;
+
+

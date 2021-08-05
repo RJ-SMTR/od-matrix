@@ -6,8 +6,8 @@ library(shiny)
 
 IntervalData <- read.csv("IntervalData.csv")
 BRTOperators <- read.csv("BRTOperatorList.csv")
-onibus_utilisation <- read_csv("onibus_utilisation.csv", col_types = cols(line = col_character())) 
-origin_destination <- read_csv("origin_destination_map.csv")
+onibus_utilisation <- read_csv("onibus_utilisation_v2.csv", col_types = cols(line = col_character())) 
+origin_destination <- read_csv("vw_origin_destination_matrix.csv")
 
 BRTLineList <- distinct(IntervalData, Line)
 BRTOperatorList <- distinct(BRTOperators, Operator)
@@ -20,7 +20,17 @@ shinyServer(function(input, output) {
         ODBaseLayerHex <- h3_to_geo_boundary_sf(ODBaseLayer$origin_tile_id) %>%
             dplyr::mutate(
                 index = ODBaseLayer$origin_tile_id
+            ) 
+        
+        ODOriginTileHex <- h3_to_geo_boundary_sf(ODBaseLayer$origin_tile_id) %>%
+            dplyr::mutate(
+                index = ODBaseLayer$origin_tile_id
+            ) %>%
+            filter(
+                index == input$OriginTile
             )
+        
+        #palOrigin <- colorBin(c("black"), domain = ODOriginTileHex$index)
         
         OriginDestinationFiltered <- origin_destination %>%
             filter(
@@ -39,8 +49,8 @@ shinyServer(function(input, output) {
                 n = OriginDestinationFiltered$n
             )
         
-        pal2 <- colorBin(colorRamps::matlab.like2(10000), domain = hexagons2$n
-                         #,reverse = TRUE
+        palOD <- colorBin("RdYlGn", domain = hexagons2$n, bins = 10
+                         ,reverse = TRUE
                          )
         
         leaflet(data = hexagons2, width = "100%") %>%
@@ -48,7 +58,7 @@ shinyServer(function(input, output) {
             addPolygons(
                 weight = 2,
                 color = "white",
-                fillColor = ~ pal2(n),
+                fillColor = ~ palOD(n),
                 fillOpacity = 1,
                 label = ~ sprintf("%*.f Destinations", 4, n)
             ) %>%
@@ -57,6 +67,18 @@ shinyServer(function(input, output) {
                 color = "white",
                 layerId = ~index,
                 data = ODBaseLayerHex
+            )%>%
+            addPolygons(
+                weight = 5,
+                color = "yellow",
+                data = ODOriginTileHex,
+                fillColor = "black",
+                fillOpacity = 1
+            ) %>%
+            addLegend("topright", pal = palOD, values = ~n,
+                      title = " ",
+                      #labFormat = labelFormat(prefix = "$"),
+                      opacity = 1
             )
         
     })
@@ -73,11 +95,11 @@ shinyServer(function(input, output) {
     OnibusUtilisationReactive <- reactive({
         if(!is.null(input$OnibusLine)){ # If line selected, filter line and update bus ID filter
             onibus_utilisation %>% filter(line %in% input$OnibusLine)
-    }
+        }
         else {onibus_utilisation}
     })  
     
-   observe({
+    observe({
         if(!is.null(input$OnibusLine)){
             updateSelectInput(
                 session = getDefaultReactiveDomain(),
@@ -86,7 +108,7 @@ shinyServer(function(input, output) {
             )}
     })
     
-   OnibusUtilisationReactiveOnibusID <- reactive({
+    OnibusUtilisationReactiveOnibusID <- reactive({
         if(!is.null(input$OnibusID)){
             OnibusUtilisationReactive() %>% filter(onibus_id %in% input$OnibusID)
         } 
@@ -96,23 +118,26 @@ shinyServer(function(input, output) {
     output$OnibusUtilisationMap <- renderLeaflet({
         utilisation_map <- OnibusUtilisationReactiveOnibusID() %>%
             mutate(h3_time_enter = hour(as.POSIXct(h3_time_enter, format="%H:%M:%S"
-                                                 , origin = '1990-01-01'))) %>%
+                                                   , origin = '1990-01-01')),
+                   n_passengers_adjusted = n_passengers_adjusted / (1 - (input$CashPayments + input$FareEvasion) ),
+                   utilisation_total_adjusted = n_passengers_adjusted / average_capacity_total
+                   ) %>%
             filter(
                 h3_time_enter >= input$OnibusUtilisationHourSlider[1],
-                h3_time_enter <= input$OnibusUtilisationHourSlider[2],
-                utilisation_sitting <= 2
-                ) %>%
+                h3_time_enter <= input$OnibusUtilisationHourSlider[2]
+                #,utilisation_total_adjusted <= 2
+            ) %>%
             group_by(tile_id) %>%
             summarise(
-                demand = mean(n_passengers, na.rm = TRUE),
-                sitting_supply = mean(capacity_sitting, na.rm = TRUE),
-                utilisation_sitting = mean(utilisation_sitting, na.rm = TRUE)
+                demand = mean(n_passengers_adjusted, na.rm = TRUE),
+                sitting_supply = mean(average_capacity_total, na.rm = TRUE),
+                utilisation_total_adjusted = mean(utilisation_total_adjusted, na.rm = TRUE)
             ) 
         
         hexagons <- h3_to_geo_boundary_sf(utilisation_map$tile_id) %>%
             dplyr::mutate(
                 index = utilisation_map$tile_id, 
-                utilisation = utilisation_map$utilisation_sitting,
+                utilisation = utilisation_map$utilisation_total_adjusted,
                 demand = utilisation_map$demand,
                 sitting_supply = utilisation_map$sitting_supply
             )
@@ -128,7 +153,10 @@ shinyServer(function(input, output) {
                 fillOpacity = 0.8,
                 label = ~ sprintf("%*.f Perc. Average Utilisation", 4, utilisation * 100),
                 layerId = ~index
-            ) 
+            ) %>%
+        addLegend("topright", pal = pal, values = ~utilisation,
+                          opacity = 1
+            )
     })
     
     OnibusUtilisationFiltered <- reactive({
@@ -143,19 +171,21 @@ shinyServer(function(input, output) {
             mutate(EnterH3Hour = hour(as.POSIXct(h3_time_enter, format="%H:%M:%S"
                                                  , origin = '1990-01-01')),
                    Interval = ceiling_date(as.POSIXct(h3_time_enter, format="%H:%M:%S"
-                                                      , origin = '1990-01-01'), "1 hour")
-                   ) %>%
+                                                      , origin = '1990-01-01'), "1 hour"),
+                   n_passengers_adjusted = n_passengers_adjusted / (1 - (input$CashPayments + input$FareEvasion)),
+                   utilisation_total_adjusted = n_passengers_adjusted / average_capacity_total
+            ) %>%
             filter(
-                   EnterH3Hour >= input$OnibusUtilisationHourSlider[1],
-                   EnterH3Hour <= input$OnibusUtilisationHourSlider[2]
+                EnterH3Hour >= input$OnibusUtilisationHourSlider[1],
+                EnterH3Hour <= input$OnibusUtilisationHourSlider[2]
             ) %>%
             group_by(line, Interval) %>%
             summarise(   
-                    Busses = n_distinct(onibus_id),
-                    AveragePassengers = mean(n_passengers, na.rm = TRUE) %>% round(digits = 0),
-                    AverageSitting = mean(capacity_sitting, na.rm = TRUE) %>% round(digits = 0),
-                    AverageUtilisation = mean(utilisation_sitting, na.rm = TRUE) %>% round(digits = 2)
-                ) %>%
+                Busses = n_distinct(onibus_id),
+                AveragePassengers = mean(n_passengers_adjusted, na.rm = TRUE) %>% round(digits = 0),
+                AverageCapacity = mean(average_capacity_total, na.rm = TRUE) %>% round(digits = 0),
+                AverageUtilisation = mean(utilisation_total_adjusted, na.rm = TRUE) %>% round(digits = 2)
+            ) %>%
             mutate(
                 Interval = hour(Interval),
                 UtilisationStatus = case_when(
@@ -168,7 +198,7 @@ shinyServer(function(input, output) {
             as_tibble() %>%
             datatable(
                 options = list(pageLength = 20)
-                ) %>%
+            ) %>%
             formatStyle('UtilisationStatus', 
                         backgroundColor = styleEqual(c("Unacceptably High", "Unacceptably Low", "Acceptable"), c('orange', 'yellow', 'light blue'))
             ) %>%
@@ -414,47 +444,6 @@ shinyServer(function(input, output) {
             )
     })
     
-    # Spacial View -----------------------------------------------------------
-    output$SpacialView <- renderPlotly({
-        IntervalDataFiltered <- IntervalData %>%
-            left_join(BRTOperators) %>%
-            filter(wday(AsAt) %in% input$SpacialViewDayOfWeek,
-                   Operator == input$SpacialViewOperator) %>%
-            mutate(
-                TotalCapacity = as.numeric(TotalCapacity),
-                SittingCapacity = as.numeric(SittingCapacity),
-                Interval = ceiling_date(
-                    as.POSIXct(EnterH3Time, format="%H:%M:%S"
-                               #,tz="ET"
-                               , origin = '1990-01-01'),
-                    "30 mins")
-            ) %>%
-            group_by(Operator, Line, stop_name, stop_lat, stop_lon, stop_sequence, Interval) %>%
-            summarise(   
-                TotalSittingCapacity = sum(SittingCapacity, na.rm = TRUE),
-                TotalStandingCapacity = sum(StandingCapacity, na.rm = TRUE),
-                TotalCapacity = sum(TotalCapacity, na.rm = TRUE)) %>%
-            as_tibble() 
-        
-        p <- IntervalDataFiltered %>%
-            mutate(text = paste0("Line: ", Line, ", Stop: ", stop_name, ", Total Capacity: ", TotalCapacity)) %>%
-            ggplot( aes(x=stop_lon, y=stop_lat, size = TotalCapacity, color = Operator, text=text)) +
-            geom_point(alpha=1) +
-            scale_size(range = c(0.01, 4), name="Total Capacity") +
-            scale_color_viridis(discrete=TRUE) +
-            theme_ipsum() +
-            theme(axis.title.x = element_blank(), axis.title.y = element_blank()) +
-            scale_x_continuous(labels = NULL) + 
-            scale_y_continuous(labels = NULL)
-        
-        ggplotly(p, tooltip="text")
-    })
-    
-    # Homepage Mockup ---------------------------------------
-    output$HomepageMockup <- renderImage({
-        list(src = './images/homepage.png', width = "60%")
-    }, deleteFile = FALSE)
-    
     # Problem Identification Mockups ---------------------------------------
     output$ProblemIdentification1 <- renderImage({
         list(src = './images/ProblemIdentification1.png', width = "60%")
@@ -471,13 +460,5 @@ shinyServer(function(input, output) {
     output$ProblemIdentification4 <- renderImage({
         list(src = './images/ProblemIdentification4.png', width = "60%")
     }, deleteFile = FALSE)
-    
-    # Kepler iframe ----------------------------------------
-    output$Kepler <- renderUI({
-        my_test <- tags$iframe(
-            src="https://kepler.gl/demo/map?mapUrl=https://dl.dropboxusercontent.com/s/rghgluq22ie337t/keplergl_d002q4j.json",
-                               height=800, width="100%")
-        print(my_test)
-        my_test
-    })
+
 })
