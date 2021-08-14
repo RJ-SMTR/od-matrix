@@ -8,6 +8,7 @@ IntervalData <- read.csv("IntervalData.csv")
 BRTOperators <- read.csv("BRTOperatorList.csv")
 onibus_utilisation <- read_csv("onibus_utilisation_v2.csv", col_types = cols(line = col_character())) 
 origin_destination <- read_csv("vw_origin_destination_matrix.csv")
+onibus_shapes  <- readxl::read_xlsx('onibus_shapes.xlsx') 
 
 BRTLineList <- distinct(IntervalData, Line)
 BRTOperatorList <- distinct(BRTOperators, Operator)
@@ -49,7 +50,9 @@ shinyServer(function(input, output) {
                 n = OriginDestinationFiltered$n
             )
         
-        palOD <- colorBin("RdYlGn", domain = hexagons2$n, bins = 10
+        palOD <- colorBin("RdYlGn", 
+                          domain = hexagons2$n, 
+                          bins = 10
                          ,reverse = TRUE
                          )
         
@@ -92,6 +95,16 @@ shinyServer(function(input, output) {
     }) 
     
     # Onibus Utilisation Map -----------------------------------------------------
+    
+    
+    onibus_shapes_reactive <- reactive({
+        if(!is.null(input$OnibusLine)){ # If line selected, filter line and update bus ID filter
+            onibus_shapes %>% filter(line %in% input$OnibusLine) %>%
+                    mutate(r_geometry = st_as_sfc(geometry))
+        }
+        else {onibus_shapes %>% mutate(r_geometry = st_as_sfc(geometry))}
+    })  
+    
     OnibusUtilisationReactive <- reactive({
         if(!is.null(input$OnibusLine)){ # If line selected, filter line and update bus ID filter
             onibus_utilisation %>% filter(line %in% input$OnibusLine)
@@ -132,7 +145,8 @@ shinyServer(function(input, output) {
                 demand = mean(n_passengers_adjusted, na.rm = TRUE),
                 sitting_supply = mean(average_capacity_total, na.rm = TRUE),
                 utilisation_total_adjusted = mean(utilisation_total_adjusted, na.rm = TRUE)
-            ) 
+            ) %>%
+            filter(!is.na(utilisation_total_adjusted)) #these NA should be fixed in the future
         
         hexagons <- h3_to_geo_boundary_sf(utilisation_map$tile_id) %>%
             dplyr::mutate(
@@ -142,21 +156,33 @@ shinyServer(function(input, output) {
                 sitting_supply = utilisation_map$sitting_supply
             )
         
-        pal <- colorBin("RdYlGn", domain = c(0, 1), reverse = TRUE)
+        pal <- colorBin("RdYlGn", 
+                        #domain = c(0, 3), 
+                        bins  = c(0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1, 3),
+                        reverse = TRUE)
+        
+        #onibus_shapes <- onibus_shapes %>%
+        #    mutate(r_geometry = st_as_sfc(geometry))
         
         leaflet(data = hexagons, width = "100%") %>%
             addProviderTiles("Stamen.Toner") %>%
+            addPolylines(
+                data = onibus_shapes_reactive() %>% .$r_geometry,
+                color = "blue",
+                opacity = 1,
+                weight = 1.5
+            ) %>%
             addPolygons(
                 weight = 2,
                 color = "white",
                 fillColor = ~ pal(utilisation),
-                fillOpacity = 0.8,
+                fillOpacity = input$TileWeight,
                 label = ~ sprintf("%*.f Perc. Average Utilisation", 4, utilisation * 100),
                 layerId = ~index
             ) %>%
-        addLegend("topright", pal = pal, values = ~utilisation,
+        addLegend("topright", pal = pal, values = ~utilisation, title = " ",
                           opacity = 1
-            )
+            )  
     })
     
     OnibusUtilisationFiltered <- reactive({
@@ -188,21 +214,33 @@ shinyServer(function(input, output) {
             ) %>%
             mutate(
                 Interval = hour(Interval),
+                Headway = round(60 / Busses, digits = 0),
                 UtilisationStatus = case_when(
-                    AverageUtilisation >= 0.8 ~ "Unacceptably High",
+                    AverageUtilisation >= 0.8 ~ "High",
                     between(AverageUtilisation, 0.4, 0.8) ~ "Acceptable",
-                    AverageUtilisation < 0.4 ~ "Unacceptably Low",
-                    TRUE ~ "Error"
-                )
+                    AverageUtilisation < 0.4 ~ "Low",
+                    TRUE ~ " "
+                ),
+                Interval = paste0(Interval, ':00-', Interval + 1, ':00')
+            ) %>%
+            select(
+                Line = line,
+                `Time Interval` = Interval,
+                `Number of Busses` = Busses,
+                Headway,
+                `Average Number of Passengers` = AveragePassengers,
+                `Average Bus Capacity` = AverageCapacity,
+                `Average Bus Utilisation` = AverageUtilisation,
+                `Utilisation Status` = UtilisationStatus
             ) %>%
             as_tibble() %>%
             datatable(
-                options = list(pageLength = 20)
+                options = list(pageLength = 24), rownames = FALSE
             ) %>%
-            formatStyle('UtilisationStatus', 
-                        backgroundColor = styleEqual(c("Unacceptably High", "Unacceptably Low", "Acceptable"), c('orange', 'yellow', 'light blue'))
+            formatStyle('Utilisation Status', 
+                        backgroundColor = styleEqual(c("High", "Low", "Acceptable"), c('orange', 'yellow', 'light blue'))
             ) %>%
-            formatStyle('AverageUtilisation',
+            formatStyle('Average Bus Utilisation',
                         background = styleColorBar(range(0, 2), 'lightblue'),
                         backgroundSize = '98% 88%',
                         backgroundRepeat = 'no-repeat',
@@ -236,8 +274,7 @@ shinyServer(function(input, output) {
                              date_labels = "%H:%M") + 
             scale_fill_gradient(low="white", high="blue") +
             theme_ipsum() +
-            theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
-            ggtitle("Total Capacity")
+            theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
         
         ggplotly(p, tooltip=c("TotalCapacity", "TotalSittingCapacity"))
     })
@@ -271,8 +308,7 @@ shinyServer(function(input, output) {
                              date_labels = "%H:%M") + 
             scale_fill_gradient(low="white", high="red") +
             theme_ipsum() +
-            theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
-            ggtitle("Utilisation")
+            theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) 
         
         ggplotly(p, tooltip=c("UtilisationRate"))
     })
@@ -373,8 +409,7 @@ shinyServer(function(input, output) {
                              date_labels = "%H:%M") + 
             scale_fill_gradient(low="white", high="blue") +
             theme_ipsum() +
-            theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
-            ggtitle("Line Capacity")
+            theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
         
         ggplotly(p, tooltip=c("TotalCapacity", "TotalSittingCapacity"))
     })
@@ -409,8 +444,7 @@ shinyServer(function(input, output) {
                              date_labels = "%H:%M") + 
             scale_fill_gradient(low="white", high="red") +
             theme_ipsum() +
-            theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
-            ggtitle("Utilisation")
+            theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
         
         ggplotly(p, tooltip=c("Utilisation", "TotalSittingCapacity"))
     })
